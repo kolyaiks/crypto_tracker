@@ -5,10 +5,16 @@ import requests
 import os
 import configparser
 
-from PyQt6.QtCore import QRunnable, pyqtSlot, QThreadPool
+from PyQt6.QtCore import QRunnable, pyqtSlot, QThreadPool, QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QTableWidget, QPushButton, QVBoxLayout, QWidget, QFileDialog, \
     QTableWidgetItem
 
+class WorkerSignal(QObject):
+    output = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
 
 class Worker(QRunnable):
     def __init__(self, fn, *args, **kwargs):
@@ -16,11 +22,16 @@ class Worker(QRunnable):
         self.fn = fn
         self.args = args
         self.kwargs = kwargs
+        self.signals = WorkerSignal()
 
     @pyqtSlot()
     def run(self):
-        # Initialising the runner function with passed args, kwargs
-        self.fn(*self.args, **self.kwargs)
+        try:
+            result = self.fn(*self.args, **self.kwargs) # Initialising the runner function with passed args, kwargs
+            if result:
+                self.signals.output.emit((result, *self.args)) # Sends normal result as object (result, kraken_pair, sym)
+        except Exception as e:
+            self.signals.error.emit(str(e)) # Sends exception to GUI
 
 class MyWindow(QMainWindow):
 
@@ -135,25 +146,32 @@ class MyWindow(QMainWindow):
 
         for sym in self.portfolio["symbol"]:
             kraken_pair = self.config['KrakenSymbols'][sym.upper()]
-            worker = Worker(self.update_pair_info, kraken_pair, sym)
+            worker = Worker(self.get_info, kraken_pair, sym)
+            worker.signals.output.connect(self.parse_resp)
+            worker.signals.error.connect(lambda err: self.logger.error(f"Worker error: {err}")) # quick inline handler for error in worker
             self.threadPool.start(worker)
 
-    def update_pair_info(self, kraken_pair, sym):
+    def get_info(self, kraken_pair, sym):
         # Sending request to Kraken
         url = "https://api.kraken.com/0/public/Ticker"
         params = {"pair": kraken_pair}
         resp = requests.get(url, params=params).json()
 
         self.logger.debug(f"For {sym} ({kraken_pair}) response: {resp}")
+        return resp
 
+    def parse_resp(self, data):
+        resp, kraken_pair, sym = data # comes from worker output signal (self.signals.output.emit((result, *self.args)))
         # Update prices in Pandas DataFrame
-        price = float(resp["result"].get(kraken_pair)["c"][0]) # "c" = last trade closed [price, lot volume]
+        price = float(resp["result"].get(kraken_pair)["c"][0])  # "c" = last trade closed [price, lot volume]
         self.logger.debug(f"Sym {sym} ({kraken_pair}) price {price}")
-        self.logger.debug(f"Dtype for Dataframe: { self.portfolio.dtypes}")
+        self.logger.debug(f"Dtype for Dataframe: {self.portfolio.dtypes}")
 
-        portfolio_row_index = self.portfolio.index[self.portfolio["symbol"] == sym].tolist()[0] # getting row number in DataFrame where we have symbol
-        self.portfolio.loc[portfolio_row_index, "price"] = price # setting price sell for this row
-        self.portfolio.loc[portfolio_row_index, "total_value"] = price * self.portfolio.loc[portfolio_row_index,"amount"] # setting total_value sell for this row
+        portfolio_row_index = self.portfolio.index[self.portfolio["symbol"] == sym].tolist()[
+            0]  # getting row number in DataFrame where we have symbol
+        self.portfolio.loc[portfolio_row_index, "price"] = price  # setting price sell for this row
+        self.portfolio.loc[portfolio_row_index, "total_value"] = price * self.portfolio.loc[
+            portfolio_row_index, "amount"]  # setting total_value sell for this row
         self.update_table()
 
     def export_csv(self):

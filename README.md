@@ -9,7 +9,9 @@ This is an example of how you can create a desktop application with PyQT6 Python
 3. Applications hits Kraken api, gets information on current asset's price, and updates value of your porfolio for each asset
 4. You can then download the updated portfolio file
 
-## Building process:
+## Building options:
+
+#### To run locally as an exe application
 
 First of all `pyinstaller` should be installed:
 
@@ -31,6 +33,29 @@ pyinstaller --onefile --add-data "config.ini;." crypto_tracker.py
 ```
 
 The `dist` folder will be created with the application file
+
+
+#### To run anywhere as a docker container
+
+Building image:
+```commandline
+docker build -t crypto_tracker:0.0.1 .
+```
+
+Running image:
+```commandline
+docker run --shm-size=2g -d -p 8080:6901 crypto_tracker:0.0.1
+```
+
+Once launched, go to your browser and hit, password will be headless:
+```commandline
+localhost:8080
+```
+
+
+
+
+
 
 ## View
 
